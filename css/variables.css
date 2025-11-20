@@ -1,0 +1,29 @@
+/* VS Code Dark+ Theme Colors */
+:root {
+    /* Background Colors */
+    --bg-root: #1e1e1e;
+    --bg-sidebar: #252526;
+    --bg-header: #333333;
+    --bg-hover: #2a2d2e;
+    --bg-active: #37373d;
+    
+    /* Border Colors */
+    --border-color: #3e3e42;
+    
+    /* Accent Colors */
+    --accent: #007acc;
+    --accent-hover: #0062a3;
+    
+    /* Text Colors */
+    --text-primary: #cccccc;
+    --text-secondary: #858585;
+    
+    /* Fonts */
+    --font-code: 'Consolas', 'Monaco', 'Courier New', monospace;
+    --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    
+    /* Icon Colors */
+    --icon-folder: #dcb67a;
+    --icon-file: #519aba;
+    --icon-secondary: #555;
+}

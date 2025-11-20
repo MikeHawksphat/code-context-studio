@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Context Studio</title>
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="css/variables.css">
+    <link rel="stylesheet" href="css/base.css">
+    <link rel="stylesheet" href="css/layout.css">
+    <link rel="stylesheet" href="css/components.css">
+    <link rel="stylesheet" href="css/editor.css">
+</head>
+<body>
+
+<header>
+    <h1>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#007acc" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+        Code Context Studio
+    </h1>
+    <button id="resetBtn" class="btn btn-ghost" style="font-size:11px; height:24px; display:none;">CLOSE</button>
+</header>
+
+<div class="main-container">
+    
+    <!-- SIDEBAR -->
+    <div class="sidebar" id="sidebar" style="display:none;">
+        <div class="sidebar-header">
+            <span>Explorer</span>
+            <div class="sidebar-actions">
+                <span class="sidebar-action" onclick="toggleAll(true)" title="Check All">✓</span>
+                <span class="sidebar-action" onclick="toggleAll(false)" title="Uncheck All">✕</span>
+            </div>
+        </div>
+        <div id="fileTree" class="file-tree"></div>
+        <div class="resizer" id="resizer"></div>
+    </div>
+
+    <!-- CONTENT -->
+    <div class="content-area">
+        <div id="uploadOverlay" class="upload-overlay">
+            <div id="dropZone" class="drop-zone-box">
+                <div style="margin-bottom: 20px; opacity: 0.8;">
+                    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                </div>
+                <h3 style="margin: 0 0 10px 0; font-weight: 500; color: var(--text-primary);">Open Folder</h3>
+                <p style="margin: 0 0 25px 0; font-size: 13px; color: var(--text-secondary);">Drag & drop to start</p>
+                <button class="btn btn-primary" onclick="document.getElementById('folderInput').click()">Browse Files...</button>
+                <input type="file" id="folderInput" webkitdirectory directory multiple>
+            </div>
+        </div>
+
+        <div id="resultView">
+            <div class="editor-toolbar">
+                <div class="tab-label">Output</div>
+                <div class="editor-actions">
+                    
+                    <!-- OPTIONS -->
+                    <div class="options-group">
+                        <label class="option-label" title="Add an ASCII tree structure at the top">
+                            <input type="checkbox" id="optTree" class="option-checkbox" checked> Tree
+                        </label>
+                        <label class="option-label" title="Include empty folders in the ASCII tree">
+                            <input type="checkbox" id="optEmpty" class="option-checkbox"> Empty Folders
+                        </label>
+                    </div>
+
+                    <button id="generateBtn" class="btn btn-primary">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                        Generate
+                    </button>
+                    <button id="copyBtn" class="btn btn-secondary">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        Copy
+                    </button>
+                </div>
+            </div>
+            <textarea id="preview" placeholder="Select files in the sidebar, then click Generate."></textarea>
+        </div>
+    </div>
+</div>
+
+<div class="status-bar">
+    <div class="status-left" id="statusBar">Ready</div>
+    <div style="opacity:0.8;">UTF-8</div>
+</div>
+
+<!-- Application Scripts -->
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
