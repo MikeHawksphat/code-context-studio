@@ -4,7 +4,7 @@
 
 import { IGNORE_FOLDERS, IGNORE_EXTS } from './config.js';
 import { createNode, sortTree } from './tree.js';
-import { setRootStructure, addFileToRegistry } from './state.js';
+import { setRootStructure, setFileRegistry } from './state.js';
 import { renderTree, setStatus } from './ui.js';
 import { elements } from './constants.js';
 
@@ -122,7 +122,7 @@ function addFileToTreeStructure(level, fileRegistry, parts, fileObj) {
 function finalizeUpload(rootStructure, fileRegistry) {
     sortTree(rootStructure);
     setRootStructure(rootStructure);
-    setFileRegistry(fileRegistry);
+    setFileRegistryWrapper(fileRegistry);
 
     elements.uploadOverlay.classList.add('hidden');
     elements.sidebar.style.display = 'flex';
@@ -141,9 +141,8 @@ function finalizeUpload(rootStructure, fileRegistry) {
  * Set file registry.
  * @param {Object} fileRegistry - File registry
  */
-function setFileRegistry(fileRegistry) {
-    const stateModule = require('./state.js');
-    stateModule.setFileRegistry(fileRegistry);
+function setFileRegistryWrapper(fileRegistry) {
+    setFileRegistry(fileRegistry);
 }
 
 /**
