@@ -18,10 +18,7 @@ It features a modern, integrated development environment (IDE) aesthetic, provid
 ## Installation and Usage
 
 ### Running the Application
-Code Context Studio is a standalone application contained entirely within a single HTML file. It requires no installation, dependencies, or build steps.
-
-1.  Download the index.html file.
-2.  Open the file in any modern web browser (Chrome, Edge, Firefox, Safari).
+Uses github pages
 
 ### How to Use
 1.  **Import Project:** Drag your project folder onto the main drop zone or click the "Browse" button to select a directory.
