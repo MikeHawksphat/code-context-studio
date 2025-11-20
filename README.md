@@ -41,7 +41,3 @@ To modify the default settings, such as which folders or file extensions are ign
 ## Privacy
 
 This tool operates entirely on the client side using standard web APIs. Your code is processed in your browser's memory and is never transmitted over the internet.
-
-## License
-
-Distributed under the MIT License.
