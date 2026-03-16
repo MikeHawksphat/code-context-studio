@@ -7,13 +7,15 @@
  * @param {string} name - Node name
  * @param {string} type - Node type ('file' or 'folder')
  * @param {string} id - Optional node ID
+ * @param {string} relativePath - Root-relative path used for diffing
  * @returns {Object} New tree node
  */
-export function createNode(name, type, id = null) {
+export function createNode(name, type, id = null, relativePath = '') {
     return {
         id: id || Math.random().toString(36).substr(2, 9),
         name: name,
         type: type,
+        relativePath: relativePath,
         children: type === 'folder' ? [] : null,
         collapsed: type === 'folder',
         checked: true

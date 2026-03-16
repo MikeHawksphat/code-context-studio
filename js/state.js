@@ -4,6 +4,7 @@
 
 export let rootStructure = [];
 export let fileRegistry = {};
+export let uploadBaseline = null;
 
 /**
  * Reset application state.
@@ -11,6 +12,7 @@ export let fileRegistry = {};
 export function resetState() {
     rootStructure = [];
     fileRegistry = {};
+    uploadBaseline = null;
 }
 
 /**
@@ -27,6 +29,14 @@ export function setRootStructure(newStructure) {
  */
 export function setFileRegistry(newRegistry) {
     fileRegistry = newRegistry;
+}
+
+/**
+ * Update upload baseline snapshot.
+ * @param {Object|null} newBaseline - Baseline snapshot
+ */
+export function setUploadBaseline(newBaseline) {
+    uploadBaseline = newBaseline;
 }
 
 /**

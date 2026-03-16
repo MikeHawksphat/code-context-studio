@@ -23,6 +23,30 @@ export function readFile(file) {
 }
 
 /**
+ * Build a stable fingerprint for diff detection.
+ * Small files are hashed by content; large files fall back to metadata.
+ * @param {File} file - File object
+ * @returns {Promise<string>} Fingerprint string
+ */
+export async function createFileFingerprint(file) {
+    if (file.size > 1000000) {
+        return `meta:${file.size}:${file.lastModified}`;
+    }
+
+    if (!globalThis.crypto?.subtle) {
+        return `meta:${file.size}:${file.lastModified}`;
+    }
+
+    const buffer = await file.arrayBuffer();
+    const digest = await crypto.subtle.digest('SHA-256', buffer);
+    const hash = Array.from(new Uint8Array(digest), b => {
+        return b.toString(16).padStart(2, '0');
+    }).join('');
+
+    return `sha256:${hash}`;
+}
+
+/**
  * Read all entries from a DirectoryReader.
  * @param {DirectoryReader} reader - Directory reader
  * @returns {Promise<Array>} All entries

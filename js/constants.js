@@ -25,6 +25,7 @@ export const elements = {
     resetBtn: document.getElementById('resetBtn'),
     resizer: document.getElementById('resizer'),
     folderInput: document.getElementById('folderInput'),
+    diffBtn: document.getElementById('diffBtn'),
     generateBtn: document.getElementById('generateBtn'),
     copyBtn: document.getElementById('copyBtn'),
     optTree: document.getElementById('optTree'),

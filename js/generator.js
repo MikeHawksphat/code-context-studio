@@ -113,6 +113,8 @@ export async function generateOutput(rootStructure, showTree, includeEmpty) {
 
     if (count === 0 && !showTree) {
         finalOutput = 'No files selected.';
+    } else if (count === 0) {
+        finalOutput += 'No files selected.';
     }
 
     return { output: finalOutput, count };

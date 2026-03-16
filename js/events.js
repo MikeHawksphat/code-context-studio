@@ -7,7 +7,7 @@ import { setStatus, renderTree } from './ui.js';
 import { generateOutput } from './generator.js';
 import { processInputFiles, processEntry } from './upload.js';
 import { toggleCheck } from './tree.js';
-import { rootStructure } from './state.js';
+import { rootStructure, uploadBaseline } from './state.js';
 
 /**
  * Initialize event listeners.
@@ -30,6 +30,9 @@ export function initializeEvents() {
     // Copy button
     elements.copyBtn.addEventListener('click', handleCopy);
 
+    // Diff reupload
+    elements.diffBtn.addEventListener('click', handleDiffUpload);
+
     // Reset button
     elements.resetBtn.addEventListener('click', handleReset);
 }
@@ -40,8 +43,11 @@ export function initializeEvents() {
  */
 async function handleFileInput(e) {
     if (e.target.files.length > 0) {
-        setStatus('Processing files...');
-        await processInputFiles(e.target.files);
+        const isDiffUpload = e.target.dataset.mode === 'diff' && !!uploadBaseline;
+        setStatus(isDiffUpload ? 'Comparing folder changes...' : 'Processing files...');
+        await processInputFiles(e.target.files, { diff: isDiffUpload });
+        e.target.value = '';
+        delete e.target.dataset.mode;
     }
 }
 
@@ -81,6 +87,18 @@ async function handleDrop(e) {
     } else {
         alert('Please drop a folder.');
     }
+}
+
+/**
+ * Trigger diff reupload flow.
+ */
+function handleDiffUpload() {
+    if (!uploadBaseline) {
+        return;
+    }
+
+    elements.folderInput.dataset.mode = 'diff';
+    elements.folderInput.click();
 }
 
 /**
