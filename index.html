@@ -37,7 +37,7 @@
     </div>
 
     <!-- CONTENT -->
-    <div class="content-area">
+    <div class="content-area" id="contentArea">
         <div id="uploadOverlay" class="upload-overlay">
             <div id="dropZone" class="drop-zone-box">
                 <div style="margin-bottom: 20px; opacity: 0.8;">
@@ -62,6 +62,18 @@
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><polyline points="21 3 21 9 15 9"></polyline></svg>
                         Reupload Diff
                     </button>
+
+                    <label class="filter-group" title="Filter explorer items by detected change type">
+                        <span class="filter-label">Filter</span>
+                        <select id="filterSelect" class="filter-select" disabled>
+                            <option value="all">All Files</option>
+                            <option value="changed">Changed Only</option>
+                            <option value="new">New</option>
+                            <option value="modified">Modified</option>
+                            <option value="renamed">Renamed</option>
+                            <option value="deleted">Deleted</option>
+                        </select>
+                    </label>
 
                     <!-- OPTIONS -->
                     <div class="options-group">

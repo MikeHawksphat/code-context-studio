@@ -5,6 +5,9 @@
 export let rootStructure = [];
 export let fileRegistry = {};
 export let uploadBaseline = null;
+export let currentDiff = null;
+export let treeFilter = 'all';
+export let pendingUploadMode = 'normal';
 
 /**
  * Reset application state.
@@ -13,6 +16,9 @@ export function resetState() {
     rootStructure = [];
     fileRegistry = {};
     uploadBaseline = null;
+    currentDiff = null;
+    treeFilter = 'all';
+    pendingUploadMode = 'normal';
 }
 
 /**
@@ -37,6 +43,30 @@ export function setFileRegistry(newRegistry) {
  */
 export function setUploadBaseline(newBaseline) {
     uploadBaseline = newBaseline;
+}
+
+/**
+ * Update the current diff state.
+ * @param {Object|null} diff - Current diff metadata
+ */
+export function setCurrentDiff(diff) {
+    currentDiff = diff;
+}
+
+/**
+ * Update the current tree filter.
+ * @param {string} filter - Filter id
+ */
+export function setTreeFilter(filter) {
+    treeFilter = filter;
+}
+
+/**
+ * Update pending upload mode.
+ * @param {string} mode - Upload mode
+ */
+export function setPendingUploadMode(mode) {
+    pendingUploadMode = mode;
 }
 
 /**

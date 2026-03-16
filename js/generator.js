@@ -2,11 +2,9 @@
  * Generate ASCII tree and context output.
  */
 
-import { hasCheckedChildren } from './tree.js';
-import { getFile } from './state.js';
+import { currentDiff, getFile } from './state.js';
 import { readFile } from './file-handler.js';
-import { elements } from './constants.js';
-import { setStatus } from './ui.js';
+import { hasCheckedChildren } from './tree.js';
 
 /**
  * Generate ASCII tree structure.
@@ -18,15 +16,13 @@ import { setStatus } from './ui.js';
 export function generateAsciiTree(nodes, prefix = '', includeEmpty = false) {
     let output = '';
 
-    // Filter nodes based on checked status and empty folder setting
-    const activeNodes = nodes.filter(n => {
-        if (!n.checked) {
+    const activeNodes = nodes.filter(node => {
+        if (!node.checked) {
             return false;
         }
 
-        if (n.type === 'folder' && !includeEmpty) {
-            // Check if folder has any checked children (recursively)
-            return hasCheckedChildren(n);
+        if (node.type === 'folder' && !includeEmpty) {
+            return hasCheckedChildren(node);
         }
 
         return true;
@@ -35,7 +31,9 @@ export function generateAsciiTree(nodes, prefix = '', includeEmpty = false) {
     activeNodes.forEach((node, index) => {
         const isLast = index === activeNodes.length - 1;
         const marker = isLast ? '└── ' : '├── ';
-        output += prefix + marker + node.name + (node.type === 'folder' ? '/' : '') + '\n';
+        const suffix = buildTreeSuffix(node);
+
+        output += `${prefix}${marker}${node.name}${node.type === 'folder' ? '/' : ''}${suffix}\n`;
 
         if (node.children && node.children.length > 0) {
             const newPrefix = prefix + (isLast ? '    ' : '│   ');
@@ -47,25 +45,35 @@ export function generateAsciiTree(nodes, prefix = '', includeEmpty = false) {
 }
 
 /**
- * Collect all checked files.
+ * Collect all checked entries.
  * @param {Array} rootStructure - Root tree nodes
- * @returns {Array} Array of {id, path} objects
+ * @returns {Array} Checked entries
  */
-export function collectCheckedFiles(rootStructure) {
+export function collectCheckedEntries(rootStructure) {
     const list = [];
 
     function collect(nodes, path) {
-        nodes.forEach(n => {
-            if (!n.checked) {
+        nodes.forEach(node => {
+            if (!node.checked) {
                 return;
             }
 
-            let fullPath = path ? `${path}/${n.name}` : n.name;
+            const fullPath = path ? `${path}/${node.name}` : node.name;
+            const outputPath = node.outputPath || fullPath;
 
-            if (n.type === 'file') {
-                list.push({ id: n.id, path: fullPath });
-            } else if (n.children) {
-                collect(n.children, fullPath);
+            if (node.type === 'file') {
+                list.push({
+                    id: node.id,
+                    path: outputPath,
+                    diffStatus: node.diffStatus,
+                    diffMeta: node.diffMeta,
+                    virtual: node.virtual
+                });
+                return;
+            }
+
+            if (node.children) {
+                collect(node.children, fullPath);
             }
         });
     }
@@ -79,12 +87,16 @@ export function collectCheckedFiles(rootStructure) {
  * @param {Array} rootStructure - Root tree nodes
  * @param {boolean} showTree - Include ASCII tree
  * @param {boolean} includeEmpty - Include empty folders
- * @returns {Promise<string>} Generated output
+ * @returns {Promise<Object>} Generated output and count
  */
 export async function generateOutput(rootStructure, showTree, includeEmpty) {
     let finalOutput = '';
 
-    // 1. ASCII Tree
+    if (currentDiff) {
+        finalOutput += buildDiffSummary(currentDiff.summary);
+        finalOutput += '--------------------------------------------------\n\n';
+    }
+
     if (showTree) {
         finalOutput += 'Project Structure:\n';
         finalOutput += '.\n';
@@ -92,30 +104,86 @@ export async function generateOutput(rootStructure, showTree, includeEmpty) {
         finalOutput += '\n--------------------------------------------------\n\n';
     }
 
-    // 2. File Content
-    const fileList = collectCheckedFiles(rootStructure);
+    const entries = collectCheckedEntries(rootStructure);
     let count = 0;
 
-    for (const item of fileList) {
-        const file = getFile(item.id);
+    for (const entry of entries) {
+        if (entry.virtual || entry.diffStatus === 'deleted') {
+            finalOutput += `DELETED_FILE: ${entry.path}\n---\n\n`;
+            count++;
+            continue;
+        }
+
+        const file = getFile(entry.id);
         if (!file) {
             continue;
         }
 
         try {
             const text = await readFile(file);
-            finalOutput += `FILE_PATH: ${item.path}\n\`\`\`\n${text}\n\`\`\`\n---\n\n`;
+            finalOutput += buildEntryHeader(entry);
+            finalOutput += `FILE_PATH: ${entry.path}\n\`\`\`\n${text}\n\`\`\`\n---\n\n`;
             count++;
-        } catch (e) {
-            console.error(`Error reading file ${item.path}:`, e);
+        } catch (error) {
+            console.error(`Error reading file ${entry.path}:`, error);
         }
     }
 
-    if (count === 0 && !showTree) {
+    if (count === 0 && !showTree && !currentDiff) {
         finalOutput = 'No files selected.';
     } else if (count === 0) {
         finalOutput += 'No files selected.';
     }
 
     return { output: finalOutput, count };
+}
+
+/**
+ * Build a tree suffix for diff states.
+ * @param {Object} node - Tree node
+ * @returns {string} Suffix text
+ */
+function buildTreeSuffix(node) {
+    if (!['new', 'modified', 'renamed', 'deleted'].includes(node.diffStatus)) {
+        return '';
+    }
+
+    return ` [${node.diffStatus}]`;
+}
+
+/**
+ * Build a diff summary block.
+ * @param {Object} summary - Diff summary
+ * @returns {string} Summary block
+ */
+function buildDiffSummary(summary) {
+    return [
+        'Diff Summary:',
+        `New Files: ${summary.new}`,
+        `Modified Files: ${summary.modified}`,
+        `Renamed Files: ${summary.renamed}`,
+        `Deleted Files: ${summary.deleted}`,
+        ''
+    ].join('\n');
+}
+
+/**
+ * Build header lines for a diff entry.
+ * @param {Object} entry - Output entry
+ * @returns {string} Header text
+ */
+function buildEntryHeader(entry) {
+    if (entry.diffStatus === 'new') {
+        return 'NEW_FILE:\n';
+    }
+
+    if (entry.diffStatus === 'modified') {
+        return 'UPDATED_FILE:\n';
+    }
+
+    if (entry.diffStatus === 'renamed') {
+        return `RENAMED_FILE: ${entry.diffMeta?.previousPath || 'Unknown'} -> ${entry.path}\n`;
+    }
+
+    return '';
 }

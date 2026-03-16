@@ -15,6 +15,7 @@ export const ICONS = {
  * Cached DOM element references.
  */
 export const elements = {
+    contentArea: document.getElementById('contentArea'),
     dropZone: document.getElementById('dropZone'),
     uploadOverlay: document.getElementById('uploadOverlay'),
     resultView: document.getElementById('resultView'),
@@ -26,6 +27,7 @@ export const elements = {
     resizer: document.getElementById('resizer'),
     folderInput: document.getElementById('folderInput'),
     diffBtn: document.getElementById('diffBtn'),
+    filterSelect: document.getElementById('filterSelect'),
     generateBtn: document.getElementById('generateBtn'),
     copyBtn: document.getElementById('copyBtn'),
     optTree: document.getElementById('optTree'),

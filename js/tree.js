@@ -8,14 +8,19 @@
  * @param {string} type - Node type ('file' or 'folder')
  * @param {string} id - Optional node ID
  * @param {string} relativePath - Root-relative path used for diffing
+ * @param {Object} options - Extra node metadata
  * @returns {Object} New tree node
  */
-export function createNode(name, type, id = null, relativePath = '') {
+export function createNode(name, type, id = null, relativePath = '', options = {}) {
     return {
         id: id || Math.random().toString(36).substr(2, 9),
         name: name,
         type: type,
         relativePath: relativePath,
+        outputPath: options.outputPath || '',
+        diffStatus: options.diffStatus || 'none',
+        diffMeta: options.diffMeta || null,
+        virtual: options.virtual || false,
         children: type === 'folder' ? [] : null,
         collapsed: type === 'folder',
         checked: true

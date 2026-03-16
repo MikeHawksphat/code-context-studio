@@ -3,6 +3,7 @@
  */
 
 import { initializeEvents, handleToggleAll } from './events.js';
+import { updateToolbarState } from './ui.js';
 
 /**
  * Initialize the application.
@@ -13,6 +14,7 @@ function initialize() {
 
     // Initialize all event listeners
     initializeEvents();
+    updateToolbarState();
 
     // Application is ready
     console.log('Code Context Studio initialized');

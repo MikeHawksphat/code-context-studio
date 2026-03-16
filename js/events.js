@@ -3,37 +3,38 @@
  */
 
 import { elements } from './constants.js';
-import { setStatus, renderTree } from './ui.js';
 import { generateOutput } from './generator.js';
-import { processInputFiles, processEntry } from './upload.js';
+import {
+    pendingUploadMode,
+    rootStructure,
+    setPendingUploadMode,
+    setTreeFilter,
+    uploadBaseline
+} from './state.js';
 import { toggleCheck } from './tree.js';
-import { rootStructure, uploadBaseline } from './state.js';
+import { setStatus, renderTree, updateToolbarState } from './ui.js';
+import { processEntry, processInputFiles } from './upload.js';
 
 /**
  * Initialize event listeners.
  */
 export function initializeEvents() {
-    // File upload
     elements.folderInput.addEventListener('change', handleFileInput);
 
-    // Drag and drop
     elements.dropZone.addEventListener('dragover', handleDragOver);
     elements.dropZone.addEventListener('dragleave', handleDragLeave);
     elements.dropZone.addEventListener('drop', handleDrop);
 
-    // Sidebar resizer
+    elements.contentArea.addEventListener('dragover', handleDragOver);
+    elements.contentArea.addEventListener('dragleave', handleDragLeave);
+    elements.contentArea.addEventListener('drop', handleDrop);
+
     initializeResizer();
 
-    // Generate button
     elements.generateBtn.addEventListener('click', handleGenerate);
-
-    // Copy button
     elements.copyBtn.addEventListener('click', handleCopy);
-
-    // Diff reupload
     elements.diffBtn.addEventListener('click', handleDiffUpload);
-
-    // Reset button
+    elements.filterSelect.addEventListener('change', handleFilterChange);
     elements.resetBtn.addEventListener('click', handleReset);
 }
 
@@ -42,13 +43,15 @@ export function initializeEvents() {
  * @param {Event} e - Change event
  */
 async function handleFileInput(e) {
-    if (e.target.files.length > 0) {
-        const isDiffUpload = e.target.dataset.mode === 'diff' && !!uploadBaseline;
-        setStatus(isDiffUpload ? 'Comparing folder changes...' : 'Processing files...');
-        await processInputFiles(e.target.files, { diff: isDiffUpload });
-        e.target.value = '';
-        delete e.target.dataset.mode;
+    if (!e.target.files.length) {
+        return;
     }
+
+    const isDiffUpload = pendingUploadMode === 'diff' && !!uploadBaseline;
+    setStatus(isDiffUpload ? 'Comparing folder changes...' : 'Processing files...');
+    await processInputFiles(e.target.files, { diff: isDiffUpload });
+    clearPendingUploadMode();
+    e.target.value = '';
 }
 
 /**
@@ -58,13 +61,20 @@ async function handleFileInput(e) {
 function handleDragOver(e) {
     e.preventDefault();
     elements.dropZone.classList.add('dragover');
+    elements.contentArea.classList.add('dragover');
 }
 
 /**
  * Handle drag leave event.
+ * @param {DragEvent} e - Drag event
  */
-function handleDragLeave() {
+function handleDragLeave(e) {
+    if (e.currentTarget === elements.contentArea && elements.contentArea.contains(e.relatedTarget)) {
+        return;
+    }
+
     elements.dropZone.classList.remove('dragover');
+    elements.contentArea.classList.remove('dragover');
 }
 
 /**
@@ -74,6 +84,7 @@ function handleDragLeave() {
 async function handleDrop(e) {
     e.preventDefault();
     elements.dropZone.classList.remove('dragover');
+    elements.contentArea.classList.remove('dragover');
 
     const items = e.dataTransfer.items;
     if (!items || !items.length) {
@@ -81,24 +92,44 @@ async function handleDrop(e) {
     }
 
     const entry = items[0].webkitGetAsEntry();
-    if (entry && entry.isDirectory) {
-        setStatus('Scanning directory...');
-        await processEntry(entry);
-    } else {
+    if (!entry || !entry.isDirectory) {
         alert('Please drop a folder.');
+        return;
     }
+
+    const isDiffUpload = pendingUploadMode === 'diff' && !!uploadBaseline;
+    setStatus(isDiffUpload ? 'Comparing dropped folder...' : 'Scanning directory...');
+    await processEntry(entry, { diff: isDiffUpload });
+    clearPendingUploadMode();
 }
 
 /**
- * Trigger diff reupload flow.
+ * Toggle diff reupload mode.
  */
 function handleDiffUpload() {
     if (!uploadBaseline) {
         return;
     }
 
-    elements.folderInput.dataset.mode = 'diff';
+    if (pendingUploadMode === 'diff') {
+        clearPendingUploadMode();
+        setStatus('Diff upload canceled.');
+        return;
+    }
+
+    setPendingUploadMode('diff');
+    updateToolbarState();
+    setStatus('Drop the updated folder anywhere in the app, or choose it from the picker.');
     elements.folderInput.click();
+}
+
+/**
+ * Handle tree filter changes.
+ * @param {Event} e - Change event
+ */
+function handleFilterChange(e) {
+    setTreeFilter(e.target.value);
+    renderTree(rootStructure);
 }
 
 /**
@@ -114,7 +145,7 @@ function initializeResizer() {
         document.body.style.userSelect = 'none';
     });
 
-    document.addEventListener('mousemove', (e) => {
+    document.addEventListener('mousemove', e => {
         if (!isResizing) {
             return;
         }
@@ -131,12 +162,14 @@ function initializeResizer() {
     });
 
     document.addEventListener('mouseup', () => {
-        if (isResizing) {
-            isResizing = false;
-            elements.resizer.classList.remove('resizing');
-            document.body.style.cursor = 'default';
-            document.body.style.userSelect = 'auto';
+        if (!isResizing) {
+            return;
         }
+
+        isResizing = false;
+        elements.resizer.classList.remove('resizing');
+        document.body.style.cursor = 'default';
+        document.body.style.userSelect = 'auto';
     });
 }
 
@@ -149,7 +182,7 @@ async function handleGenerate() {
 
     btn.innerHTML = `<svg class="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg> Processing...`;
 
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(resolve => setTimeout(resolve, 50));
 
     elements.preview.value = '';
     setStatus('Generating...');
@@ -162,7 +195,7 @@ async function handleGenerate() {
         );
 
         elements.preview.value = output;
-        setStatus(`Generated context from ${count} files.`);
+        setStatus(`Generated output from ${count} entries.`);
     } catch (error) {
         console.error('Error generating output:', error);
         setStatus('Error generating output.');
@@ -202,6 +235,14 @@ function handleReset() {
  * @param {boolean} value - Check state
  */
 export function handleToggleAll(value) {
-    rootStructure.forEach(n => toggleCheck(n, value));
+    rootStructure.forEach(node => toggleCheck(node, value));
     renderTree(rootStructure);
+}
+
+/**
+ * Clear pending diff-upload mode.
+ */
+function clearPendingUploadMode() {
+    setPendingUploadMode('normal');
+    updateToolbarState();
 }

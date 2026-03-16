@@ -2,6 +2,11 @@
  * File reading and utility functions.
  */
 
+const HASH_SIZE_LIMIT = 5_000_000;
+let hashWorker = null;
+let workerRequestId = 0;
+const pendingHashes = new Map();
+
 /**
  * Read file contents as text.
  * @param {File} file - File object
@@ -29,7 +34,7 @@ export function readFile(file) {
  * @returns {Promise<string>} Fingerprint string
  */
 export async function createFileFingerprint(file) {
-    if (file.size > 1000000) {
+    if (file.size > HASH_SIZE_LIMIT) {
         return `meta:${file.size}:${file.lastModified}`;
     }
 
@@ -38,12 +43,96 @@ export async function createFileFingerprint(file) {
     }
 
     const buffer = await file.arrayBuffer();
-    const digest = await crypto.subtle.digest('SHA-256', buffer);
-    const hash = Array.from(new Uint8Array(digest), b => {
-        return b.toString(16).padStart(2, '0');
-    }).join('');
+    const hash = await hashBuffer(buffer);
 
     return `sha256:${hash}`;
+}
+
+/**
+ * Hash a buffer using a worker when possible.
+ * @param {ArrayBuffer} buffer - Buffer to hash
+ * @returns {Promise<string>} Hex hash
+ */
+async function hashBuffer(buffer) {
+    const worker = getHashWorker();
+    if (!worker) {
+        return hashBufferOnMainThread(buffer);
+    }
+
+    const id = ++workerRequestId;
+
+    return new Promise((resolve, reject) => {
+        pendingHashes.set(id, { resolve, reject });
+        worker.postMessage({ id, buffer });
+    }).catch(() => {
+        return hashBufferOnMainThread(buffer);
+    });
+}
+
+/**
+ * Hash a buffer on the main thread as fallback.
+ * @param {ArrayBuffer} buffer - Buffer to hash
+ * @returns {Promise<string>} Hex hash
+ */
+async function hashBufferOnMainThread(buffer) {
+    const digest = await crypto.subtle.digest('SHA-256', buffer);
+    return Array.from(new Uint8Array(digest), value => {
+        return value.toString(16).padStart(2, '0');
+    }).join('');
+}
+
+/**
+ * Get or create the hash worker.
+ * @returns {Worker|null} Hash worker
+ */
+function getHashWorker() {
+    if (hashWorker !== null) {
+        return hashWorker;
+    }
+
+    if (typeof Worker === 'undefined') {
+        hashWorker = null;
+        return hashWorker;
+    }
+
+    try {
+        hashWorker = new Worker(new URL('./hash-worker.js', import.meta.url), {
+            type: 'module'
+        });
+
+        hashWorker.addEventListener('message', event => {
+            const { id, hash, error } = event.data;
+            const pending = pendingHashes.get(id);
+
+            if (!pending) {
+                return;
+            }
+
+            pendingHashes.delete(id);
+
+            if (error) {
+                pending.reject(new Error(error));
+                return;
+            }
+
+            pending.resolve(hash);
+        });
+
+        hashWorker.addEventListener('error', error => {
+            console.warn('Hash worker failed, falling back to main thread:', error);
+            hashWorker = null;
+
+            pendingHashes.forEach(pending => {
+                pending.reject(new Error('Hash worker unavailable'));
+            });
+            pendingHashes.clear();
+        });
+    } catch (error) {
+        console.warn('Unable to create hash worker:', error);
+        hashWorker = null;
+    }
+
+    return hashWorker;
 }
 
 /**

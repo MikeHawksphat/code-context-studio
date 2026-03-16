@@ -3,11 +3,19 @@
  */
 
 import { IGNORE_FOLDERS, IGNORE_EXTS } from './config.js';
-import { createNode, sortTree } from './tree.js';
-import { setRootStructure, setFileRegistry, setUploadBaseline, uploadBaseline } from './state.js';
-import { renderTree, setStatus } from './ui.js';
-import { elements } from './constants.js';
+import { buildBaseline, getStoredBaseline, saveStoredBaseline, validateBaseline } from './baseline-storage.js';
 import { createFileFingerprint } from './file-handler.js';
+import { elements } from './constants.js';
+import {
+    setCurrentDiff,
+    setFileRegistry,
+    setRootStructure,
+    setTreeFilter,
+    setUploadBaseline,
+    uploadBaseline
+} from './state.js';
+import { createNode, sortTree } from './tree.js';
+import { renderTree, setStatus, updateToolbarState } from './ui.js';
 
 /**
  * Process files from input element.
@@ -15,41 +23,29 @@ import { createFileFingerprint } from './file-handler.js';
  * @param {Object} options - Upload options
  */
 export async function processInputFiles(fileList, options = {}) {
-    const rootStructure = [];
-    const fileRegistry = {};
-    const fingerprints = {};
+    const descriptors = [];
+    let rootName = '';
 
-    for (let file of fileList) {
+    for (const file of fileList) {
         const parts = file.webkitRelativePath.split('/');
         if (!parts.length || shouldIgnorePath(file.webkitRelativePath)) {
             continue;
         }
 
-        const [rootName, ...relativeParts] = parts;
+        const [candidateRootName, ...relativeParts] = parts;
         const relativePath = relativeParts.join('/');
-        if (!relativePath) {
+        if (!relativePath || shouldIgnoreFile(relativeParts[relativeParts.length - 1])) {
             continue;
         }
 
-        if (shouldIgnoreFile(relativeParts[relativeParts.length - 1])) {
-            continue;
+        if (!rootName) {
+            rootName = candidateRootName;
         }
 
-        let rootNode = rootStructure.find(node => {
-            return node.name === rootName && node.type === 'folder';
-        });
-
-        if (!rootNode) {
-            rootNode = createNode(rootName, 'folder', null, '');
-            rootNode.collapsed = false;
-            rootStructure.push(rootNode);
-        }
-
-        fingerprints[relativePath] = await createFileFingerprint(file);
-        addFileToTreeStructure(rootNode.children, fileRegistry, relativeParts, file, relativePath);
+        descriptors.push({ relativePath, file });
     }
 
-    finalizeUpload(rootStructure, fileRegistry, fingerprints, options);
+    await finalizeUpload(rootName, descriptors, options);
 }
 
 /**
@@ -58,27 +54,19 @@ export async function processInputFiles(fileList, options = {}) {
  * @param {Object} options - Upload options
  */
 export async function processEntry(entry, options = {}) {
-    const rootStructure = [];
-    const fileRegistry = {};
-    const fingerprints = {};
+    const descriptors = [];
 
-    const root = createNode(entry.name, 'folder', null, '');
-    root.collapsed = false;
-    rootStructure.push(root);
-
-    await scanRecursively(entry, root, fileRegistry, fingerprints, '');
-    finalizeUpload(rootStructure, fileRegistry, fingerprints, options);
+    await scanRecursively(entry, '', descriptors);
+    await finalizeUpload(entry.name, descriptors, options);
 }
 
 /**
- * Recursively scan directory entry.
- * @param {FileSystemEntry} entry - Directory entry
- * @param {Object} parent - Parent tree node
- * @param {Object} fileRegistry - File registry
- * @param {Object} fingerprints - File fingerprints by root-relative path
+ * Recursively collect files from a directory entry.
+ * @param {FileSystemDirectoryEntry} entry - Directory entry
  * @param {string} relativePath - Current root-relative path
+ * @param {Array} descriptors - Collected file descriptors
  */
-async function scanRecursively(entry, parent, fileRegistry, fingerprints, relativePath) {
+async function scanRecursively(entry, relativePath, descriptors) {
     if (!entry.isDirectory) {
         return;
     }
@@ -92,81 +80,77 @@ async function scanRecursively(entry, parent, fileRegistry, fingerprints, relati
         }
 
         if (child.isDirectory) {
-            const childRelativePath = joinRelativePath(relativePath, child.name);
-            const folder = createNode(child.name, 'folder', null, childRelativePath);
-            parent.children.push(folder);
-            await scanRecursively(child, folder, fileRegistry, fingerprints, childRelativePath);
-        } else {
-            if (shouldIgnoreFile(child.name)) {
-                continue;
-            }
-
-            const file = await entryFile(child);
-            const childRelativePath = joinRelativePath(relativePath, child.name);
-            const id = Math.random().toString(36).substr(2, 9);
-            fileRegistry[id] = file;
-            fingerprints[childRelativePath] = await createFileFingerprint(file);
-            parent.children.push(createNode(child.name, 'file', id, childRelativePath));
+            await scanRecursively(child, joinRelativePath(relativePath, child.name), descriptors);
+            continue;
         }
+
+        if (shouldIgnoreFile(child.name)) {
+            continue;
+        }
+
+        const file = await entryFile(child);
+        descriptors.push({
+            relativePath: joinRelativePath(relativePath, child.name),
+            file
+        });
     }
 }
 
 /**
- * Add file to tree structure recursively.
- * @param {Array} level - Current tree level
- * @param {Object} fileRegistry - File registry
- * @param {Array} parts - Path parts inside the uploaded root folder
- * @param {File} fileObj - File object
- * @param {string} relativePath - Root-relative file path
- * @param {string} currentPath - Current folder path
+ * Finalize upload and render the explorer.
+ * @param {string} rootName - Root folder name
+ * @param {Array} descriptors - File descriptors
+ * @param {Object} options - Upload options
  */
-function addFileToTreeStructure(level, fileRegistry, parts, fileObj, relativePath, currentPath = '') {
-    const name = parts[0];
-    if (IGNORE_FOLDERS.includes(name)) {
+async function finalizeUpload(rootName, descriptors, options = {}) {
+    if (!rootName) {
+        setStatus('No supported files found.');
         return;
     }
 
-    let node = level.find(x => x.name === name);
-    const isFile = parts.length === 1;
-    const nodeRelativePath = isFile ? relativePath : joinRelativePath(currentPath, name);
+    setStatus('Fingerprinting files...');
 
-    if (!node) {
-        const id = isFile ? Math.random().toString(36).substr(2, 9) : null;
-        node = createNode(name, isFile ? 'file' : 'folder', id, nodeRelativePath);
+    const fingerprintEntries = await Promise.all(descriptors.map(async descriptor => {
+        return [
+            descriptor.relativePath,
+            await createFileFingerprint(descriptor.file)
+        ];
+    }));
 
-        if (isFile) {
-            if (shouldIgnoreFile(name)) {
-                return;
-            }
-            fileRegistry[id] = fileObj;
+    const fingerprints = Object.fromEntries(fingerprintEntries);
+    const { rootStructure, fileRegistry, rootNode } = buildTree(rootName, descriptors);
+    const comparison = resolveComparisonBaseline(rootName, Object.keys(fingerprints).sort(), options);
+
+    let diffResult = null;
+    let statusMessage = 'Ready.';
+
+    if (comparison.shouldDiff && comparison.baseline) {
+        diffResult = applyDiff(rootNode, rootName, fingerprints, comparison.baseline);
+        setCurrentDiff({
+            rootName,
+            summary: diffResult.summary,
+            source: comparison.source,
+            warning: comparison.warning || null
+        });
+        setTreeFilter('changed');
+        statusMessage = buildDiffStatusMessage(diffResult.summary, comparison.warning, comparison.source);
+    } else {
+        setCurrentDiff(null);
+        setTreeFilter('all');
+        markTreeAsFullUpload(rootNode);
+
+        if (comparison.warning) {
+            statusMessage = `Loaded full folder. ${comparison.warning}`;
         }
-
-        level.push(node);
     }
 
-    if (!isFile) {
-        addFileToTreeStructure(node.children, fileRegistry, parts.slice(1), fileObj, relativePath, nodeRelativePath);
-    }
-}
-
-/**
- * Finalize upload and show results.
- * @param {Array} rootStructure - Root tree nodes
- * @param {Object} fileRegistry - File registry
- * @param {Object} fingerprints - File fingerprints by root-relative path
- * @param {Object} options - Upload options
- */
-function finalizeUpload(rootStructure, fileRegistry, fingerprints, options = {}) {
     sortTree(rootStructure);
-    const diffSummary = options.diff && uploadBaseline
-        ? applyDiffSelection(rootStructure, fingerprints, uploadBaseline.fingerprints)
-        : null;
-
     setRootStructure(rootStructure);
-    setFileRegistryWrapper(fileRegistry);
-    setUploadBaseline({
-        fingerprints: fingerprints
-    });
+    setFileRegistry(fileRegistry);
+
+    const newBaseline = buildBaseline(rootName, fingerprints);
+    setUploadBaseline(newBaseline);
+    saveStoredBaseline(newBaseline);
 
     elements.uploadOverlay.classList.add('hidden');
     elements.sidebar.style.display = 'flex';
@@ -178,24 +162,366 @@ function finalizeUpload(rootStructure, fileRegistry, fingerprints, options = {})
     }, 50);
 
     elements.resetBtn.style.display = 'inline-flex';
+    updateToolbarState();
     renderTree(rootStructure);
-    if (diffSummary) {
-        if (diffSummary.changed === 0) {
-            setStatus('No file changes detected.');
+    setStatus(statusMessage);
+}
+
+/**
+ * Build a tree and file registry from descriptors.
+ * @param {string} rootName - Root folder name
+ * @param {Array} descriptors - File descriptors
+ * @returns {Object} Tree and registry
+ */
+function buildTree(rootName, descriptors) {
+    const rootStructure = [];
+    const fileRegistry = {};
+    const rootNode = createNode(rootName, 'folder', null, '');
+    rootNode.collapsed = false;
+    rootStructure.push(rootNode);
+
+    descriptors.forEach(({ relativePath, file }) => {
+        addFileToTree(rootNode.children, fileRegistry, relativePath.split('/'), file, relativePath);
+    });
+
+    return { rootStructure, fileRegistry, rootNode };
+}
+
+/**
+ * Add a file into the tree recursively.
+ * @param {Array} level - Tree level
+ * @param {Object} fileRegistry - File registry
+ * @param {string[]} parts - Root-relative path parts
+ * @param {File} file - File object
+ * @param {string} relativePath - Full root-relative path
+ * @param {string} currentPath - Current folder path
+ */
+function addFileToTree(level, fileRegistry, parts, file, relativePath, currentPath = '') {
+    const name = parts[0];
+    let node = level.find(item => item.name === name);
+    const isFile = parts.length === 1;
+    const nodeRelativePath = isFile ? relativePath : joinRelativePath(currentPath, name);
+
+    if (!node) {
+        if (isFile) {
+            const id = Math.random().toString(36).substr(2, 9);
+            fileRegistry[id] = file;
+            node = createNode(name, 'file', id, nodeRelativePath);
         } else {
-            setStatus(`Diff ready: ${diffSummary.changed} changed/new, ${diffSummary.unchanged} unchanged skipped.`);
+            node = createNode(name, 'folder', null, nodeRelativePath);
         }
-    } else {
-        setStatus('Ready.');
+
+        level.push(node);
+    }
+
+    if (!isFile) {
+        addFileToTree(node.children, fileRegistry, parts.slice(1), file, relativePath, nodeRelativePath);
     }
 }
 
 /**
- * Set file registry.
- * @param {Object} fileRegistry - File registry
+ * Resolve which baseline to compare against.
+ * @param {string} rootName - Root folder name
+ * @param {string[]} currentPaths - Current root-relative paths
+ * @param {Object} options - Upload options
+ * @returns {Object} Comparison settings
  */
-function setFileRegistryWrapper(fileRegistry) {
-    setFileRegistry(fileRegistry);
+function resolveComparisonBaseline(rootName, currentPaths, options) {
+    const inMemoryBaseline = uploadBaseline && uploadBaseline.rootName === rootName ? uploadBaseline : null;
+    const storedBaseline = getStoredBaseline(rootName);
+    const shouldAutoUseStoredBaseline = !options.diff && !inMemoryBaseline && !!storedBaseline;
+    const candidate = options.diff
+        ? (inMemoryBaseline || storedBaseline)
+        : (shouldAutoUseStoredBaseline ? storedBaseline : null);
+
+    if (!candidate) {
+        return {
+            shouldDiff: false,
+            baseline: null,
+            source: null,
+            warning: null
+        };
+    }
+
+    const validation = validateBaseline(candidate, rootName, currentPaths);
+    if (!validation.valid) {
+        return {
+            shouldDiff: false,
+            baseline: null,
+            source: null,
+            warning: options.diff || shouldAutoUseStoredBaseline
+                ? 'Saved baseline ignored because this upload does not look like the same project.'
+                : null
+        };
+    }
+
+    return {
+        shouldDiff: options.diff || shouldAutoUseStoredBaseline,
+        baseline: candidate,
+        source: inMemoryBaseline === candidate ? 'memory' : 'storage',
+        warning: shouldAutoUseStoredBaseline ? 'Loaded against your saved baseline.' : null
+    };
+}
+
+/**
+ * Apply diff metadata to the tree.
+ * @param {Object} rootNode - Root folder node
+ * @param {string} rootName - Root folder name
+ * @param {Object} currentFingerprints - Current fingerprints
+ * @param {Object} baseline - Baseline snapshot
+ * @returns {Object} Diff result
+ */
+function applyDiff(rootNode, rootName, currentFingerprints, baseline) {
+    const previousFingerprints = baseline.fingerprints || {};
+    const previousPaths = Object.keys(previousFingerprints);
+    const currentPaths = Object.keys(currentFingerprints);
+    const currentPathSet = new Set(currentPaths);
+    const deletedPaths = previousPaths.filter(path => {
+        return !currentPathSet.has(path);
+    });
+    const newPaths = currentPaths.filter(path => {
+        return !(path in previousFingerprints);
+    });
+    const renameMap = detectRenames(newPaths, deletedPaths, currentFingerprints, previousFingerprints);
+    const deletedOnlyPaths = deletedPaths.filter(path => {
+        return !renameMap.deletedToRenamed.has(path);
+    });
+
+    const summary = {
+        new: 0,
+        modified: 0,
+        renamed: renameMap.newToPrevious.size,
+        deleted: deletedOnlyPaths.length,
+        unchanged: 0,
+        totalChanged: 0
+    };
+
+    applyDiffToNode(rootNode, rootName, currentFingerprints, previousFingerprints, renameMap.newToPrevious, summary, true);
+    appendDeletedNodes(rootNode, rootName, deletedOnlyPaths);
+    updateFolderSelection(rootNode, true);
+
+    summary.totalChanged = summary.new + summary.modified + summary.renamed + summary.deleted;
+
+    return {
+        summary,
+        deletedPaths: deletedOnlyPaths,
+        renamedPaths: renameMap.newToPrevious
+    };
+}
+
+/**
+ * Mark a tree as a normal full upload.
+ * @param {Object} node - Root node
+ */
+function markTreeAsFullUpload(node) {
+    node.checked = true;
+    node.diffStatus = 'none';
+    node.diffMeta = null;
+
+    if (!node.children) {
+        return;
+    }
+
+    node.children.forEach(child => {
+        child.checked = true;
+        child.diffStatus = 'none';
+        child.diffMeta = null;
+        child.virtual = false;
+
+        if (child.type === 'folder') {
+            child.collapsed = child.relativePath !== '';
+            markTreeAsFullUpload(child);
+        }
+    });
+}
+
+/**
+ * Apply diff metadata to a single tree node.
+ * @param {Object} node - Tree node
+ * @param {string} rootName - Root folder name
+ * @param {Object} currentFingerprints - Current fingerprints
+ * @param {Object} previousFingerprints - Previous fingerprints
+ * @param {Map} renamedPaths - Renamed new path => old path
+ * @param {Object} summary - Diff summary
+ * @param {boolean} isRoot - Whether this is the root node
+ * @returns {boolean} True if the node or descendants are checked
+ */
+function applyDiffToNode(node, rootName, currentFingerprints, previousFingerprints, renamedPaths, summary, isRoot = false) {
+    if (node.type === 'file') {
+        const previousFingerprint = previousFingerprints[node.relativePath];
+        const renamedFrom = renamedPaths.get(node.relativePath);
+
+        if (renamedFrom) {
+            node.diffStatus = 'renamed';
+            node.diffMeta = {
+                previousPath: `${rootName}/${renamedFrom}`
+            };
+            node.checked = true;
+            return true;
+        }
+
+        if (!(node.relativePath in previousFingerprints)) {
+            node.diffStatus = 'new';
+            node.diffMeta = null;
+            node.checked = true;
+            summary.new++;
+            return true;
+        }
+
+        if (previousFingerprint !== currentFingerprints[node.relativePath]) {
+            node.diffStatus = 'modified';
+            node.diffMeta = null;
+            node.checked = true;
+            summary.modified++;
+            return true;
+        }
+
+        node.diffStatus = 'unchanged';
+        node.diffMeta = null;
+        node.checked = false;
+        summary.unchanged++;
+        return false;
+    }
+
+    let hasCheckedChild = false;
+    node.children.forEach(child => {
+        hasCheckedChild = applyDiffToNode(
+            child,
+            rootName,
+            currentFingerprints,
+            previousFingerprints,
+            renamedPaths,
+            summary
+        ) || hasCheckedChild;
+    });
+
+    node.checked = isRoot ? true : hasCheckedChild;
+    node.collapsed = isRoot ? false : !hasCheckedChild;
+    node.diffStatus = 'none';
+    return hasCheckedChild;
+}
+
+/**
+ * Append virtual deleted files to the tree.
+ * @param {Object} rootNode - Root folder node
+ * @param {string} rootName - Root folder name
+ * @param {string[]} deletedPaths - Deleted root-relative paths
+ */
+function appendDeletedNodes(rootNode, rootName, deletedPaths) {
+    if (!deletedPaths.length) {
+        return;
+    }
+
+    const deletedFolder = createNode('[Deleted Files]', 'folder', null, '__deleted__', {
+        diffStatus: 'deleted'
+    });
+    deletedFolder.collapsed = false;
+    deletedFolder.checked = true;
+
+    deletedPaths.sort().forEach(relativePath => {
+        deletedFolder.children.push(createNode(relativePath, 'file', null, relativePath, {
+            outputPath: `${rootName}/${relativePath}`,
+            diffStatus: 'deleted',
+            diffMeta: {
+                previousPath: `${rootName}/${relativePath}`
+            },
+            virtual: true
+        }));
+    });
+
+    rootNode.children.push(deletedFolder);
+}
+
+/**
+ * Detect renamed files by matching fingerprints.
+ * @param {string[]} newPaths - New root-relative paths
+ * @param {string[]} deletedPaths - Deleted root-relative paths
+ * @param {Object} currentFingerprints - Current fingerprints
+ * @param {Object} previousFingerprints - Previous fingerprints
+ * @returns {Object} Rename maps
+ */
+function detectRenames(newPaths, deletedPaths, currentFingerprints, previousFingerprints) {
+    const deletedByFingerprint = new Map();
+
+    deletedPaths.forEach(path => {
+        const fingerprint = previousFingerprints[path];
+        if (!deletedByFingerprint.has(fingerprint)) {
+            deletedByFingerprint.set(fingerprint, []);
+        }
+        deletedByFingerprint.get(fingerprint).push(path);
+    });
+
+    const newToPrevious = new Map();
+    const deletedToRenamed = new Map();
+
+    [...newPaths].sort().forEach(path => {
+        const fingerprint = currentFingerprints[path];
+        const candidates = deletedByFingerprint.get(fingerprint);
+
+        if (!candidates || !candidates.length) {
+            return;
+        }
+
+        const previousPath = candidates.shift();
+        newToPrevious.set(path, previousPath);
+        deletedToRenamed.set(previousPath, path);
+    });
+
+    return {
+        newToPrevious,
+        deletedToRenamed
+    };
+}
+
+/**
+ * Update folder selection after diff metadata has been applied.
+ * @param {Object} node - Tree node
+ * @param {boolean} isRoot - Whether this node is the root node
+ * @returns {boolean} True if checked descendants exist
+ */
+function updateFolderSelection(node, isRoot = false) {
+    if (node.type === 'file') {
+        return node.checked;
+    }
+
+    let hasCheckedChild = false;
+    node.children.forEach(child => {
+        hasCheckedChild = updateFolderSelection(child) || hasCheckedChild;
+    });
+
+    node.checked = isRoot ? true : hasCheckedChild;
+    node.collapsed = isRoot ? false : !hasCheckedChild;
+    return hasCheckedChild;
+}
+
+/**
+ * Build a human-readable diff status message.
+ * @param {Object} summary - Diff summary
+ * @param {string|null} warning - Optional warning
+ * @param {string|null} source - Baseline source
+ * @returns {string} Status message
+ */
+function buildDiffStatusMessage(summary, warning, source) {
+    if (summary.totalChanged === 0) {
+        return `No file changes detected.${warning ? ` ${warning}` : ''}`;
+    }
+
+    const parts = [];
+    if (summary.new) {
+        parts.push(`${summary.new} new`);
+    }
+    if (summary.modified) {
+        parts.push(`${summary.modified} modified`);
+    }
+    if (summary.renamed) {
+        parts.push(`${summary.renamed} renamed`);
+    }
+    if (summary.deleted) {
+        parts.push(`${summary.deleted} deleted`);
+    }
+
+    const prefix = source === 'storage' ? 'Saved diff ready' : 'Diff ready';
+    return `${prefix}: ${parts.join(', ')}.${warning ? ` ${warning}` : ''}`;
 }
 
 /**
@@ -204,8 +530,8 @@ function setFileRegistryWrapper(fileRegistry) {
  * @returns {boolean} True if should ignore
  */
 function shouldIgnorePath(path) {
-    return IGNORE_FOLDERS.some(f => {
-        return path.includes(`/${f}/`) || path.startsWith(`${f}/`);
+    return IGNORE_FOLDERS.some(folder => {
+        return path.includes(`/${folder}/`) || path.startsWith(`${folder}/`);
     });
 }
 
@@ -215,8 +541,8 @@ function shouldIgnorePath(path) {
  * @returns {boolean} True if should ignore
  */
 function shouldIgnoreFile(name) {
-    return name.startsWith('.') || IGNORE_EXTS.some(e => {
-        return name.toLowerCase().endsWith(e);
+    return name.startsWith('.') || IGNORE_EXTS.some(extension => {
+        return name.toLowerCase().endsWith(extension);
     });
 }
 
@@ -231,78 +557,26 @@ function joinRelativePath(base, name) {
 }
 
 /**
- * Apply diff selection against a previous upload snapshot.
- * Changed and new files remain checked; unchanged files are unchecked.
- * @param {Array} rootNodes - Tree nodes
- * @param {Object} currentFingerprints - Current fingerprint map
- * @param {Object} previousFingerprints - Previous fingerprint map
- * @returns {Object} Diff summary
- */
-function applyDiffSelection(rootNodes, currentFingerprints, previousFingerprints) {
-    const summary = {
-        changed: 0,
-        unchanged: 0
-    };
-
-    rootNodes.forEach(rootNode => {
-        applyDiffToNode(rootNode, currentFingerprints, previousFingerprints, summary, true);
-    });
-
-    return summary;
-}
-
-/**
- * Apply diff state recursively to a tree node.
- * @param {Object} node - Tree node
- * @param {Object} currentFingerprints - Current fingerprint map
- * @param {Object} previousFingerprints - Previous fingerprint map
- * @param {Object} summary - Diff summary accumulator
- * @param {boolean} isRoot - Whether this node is a root node
- * @returns {boolean} True if the node or a descendant is selected
- */
-function applyDiffToNode(node, currentFingerprints, previousFingerprints, summary, isRoot = false) {
-    if (node.type === 'file') {
-        const previous = previousFingerprints[node.relativePath];
-        const changed = !previous || previous !== currentFingerprints[node.relativePath];
-
-        node.checked = changed;
-        if (changed) {
-            summary.changed++;
-        } else {
-            summary.unchanged++;
-        }
-
-        return changed;
-    }
-
-    let hasCheckedChild = false;
-    node.children.forEach(child => {
-        hasCheckedChild = applyDiffToNode(child, currentFingerprints, previousFingerprints, summary) || hasCheckedChild;
-    });
-
-    node.checked = hasCheckedChild;
-    node.collapsed = isRoot ? false : !hasCheckedChild;
-    return hasCheckedChild;
-}
-
-/**
  * Read all entries from a DirectoryReader.
  * @param {DirectoryReader} reader - Directory reader
  * @returns {Promise<Array>} All entries
  */
 function readEntriesAll(reader) {
-    return new Promise(res => {
+    return new Promise(resolve => {
         let all = [];
-        let read = () => {
-            reader.readEntries(r => {
-                if (!r.length) {
-                    res(all);
-                } else {
-                    all = all.concat(r);
-                    read();
+
+        const read = () => {
+            reader.readEntries(entries => {
+                if (!entries.length) {
+                    resolve(all);
+                    return;
                 }
+
+                all = all.concat(entries);
+                read();
             });
         };
+
         read();
     });
 }
@@ -313,7 +587,7 @@ function readEntriesAll(reader) {
  * @returns {Promise<File>} File object
  */
 function entryFile(entry) {
-    return new Promise((res, rej) => {
-        entry.file(res, rej);
+    return new Promise((resolve, reject) => {
+        entry.file(resolve, reject);
     });
 }

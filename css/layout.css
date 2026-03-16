@@ -105,6 +105,24 @@ h1 {
     position: relative;
 }
 
+.content-area.dragover {
+    box-shadow: inset 0 0 0 2px rgba(0, 122, 204, 0.5);
+}
+
+.content-area.drop-diff-mode::after {
+    content: 'Diff mode active: drop an updated folder to compare';
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: white;
+    background: rgba(0, 122, 204, 0.92);
+    border-radius: 999px;
+    pointer-events: none;
+    z-index: 55;
+}
+
 /* Upload Overlay */
 .upload-overlay {
     position: absolute;
